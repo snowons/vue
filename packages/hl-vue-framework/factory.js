@@ -2,7 +2,7 @@
 
 
 
-module.exports = function weexFactory (exports, document) {
+module.exports = function hlFactory (exports, document) {
 
 /*  */
 
@@ -1628,7 +1628,7 @@ function validateProp (
   if (
     process.env.NODE_ENV !== 'production' &&
     // skip validation for weex recycle-list child component props
-    !( isObject(value) && ('@binding' in value))
+    !(false  )
   ) {
     assertProp(prop, key, value, vm, absent);
   }
@@ -2192,11 +2192,6 @@ function updateListeners (
     def = cur = on[name];
     old = oldOn[name];
     event = normalizeEvent(name);
-    /* istanbul ignore if */
-    if ( isPlainObject(def)) {
-      cur = def.handler;
-      event.params = def.params;
-    }
     if (isUndef(cur)) {
       process.env.NODE_ENV !== 'production' && warn(
         "Invalid handler for event \"" + (event.name) + "\": got " + String(cur),
@@ -3094,198 +3089,6 @@ function mergeProps (to, from) {
 
 /*  */
 
-var RECYCLE_LIST_MARKER = '@inRecycleList';
-
-// Register the component hook to weex native render engine.
-// The hook will be triggered by native, not javascript.
-function registerComponentHook (
-  componentId,
-  type, // hook type, could be "lifecycle" or "instance"
-  hook, // hook name
-  fn
-) {
-  if (!document || !document.taskCenter) {
-    warn("Can't find available \"document\" or \"taskCenter\".");
-    return
-  }
-  if (typeof document.taskCenter.registerHook === 'function') {
-    return document.taskCenter.registerHook(componentId, type, hook, fn)
-  }
-  warn(("Failed to register component hook \"" + type + "@" + hook + "#" + componentId + "\"."));
-}
-
-// Updates the state of the component to weex native render engine.
-function updateComponentData (
-  componentId,
-  newData,
-  callback
-) {
-  if (!document || !document.taskCenter) {
-    warn("Can't find available \"document\" or \"taskCenter\".");
-    return
-  }
-  if (typeof document.taskCenter.updateData === 'function') {
-    return document.taskCenter.updateData(componentId, newData, callback)
-  }
-  warn(("Failed to update component data (" + componentId + ")."));
-}
-
-/*  */
-
-var uid$1 = 0;
-
-// override Vue.prototype._init
-function initVirtualComponent (options) {
-  if ( options === void 0 ) options = {};
-
-  var vm = this;
-  var componentId = options.componentId;
-
-  // virtual component uid
-  vm._uid = "virtual-component-" + (uid$1++);
-
-  // a flag to avoid this being observed
-  vm._isVue = true;
-  // merge options
-  if (options && options._isComponent) {
-    // optimize internal component instantiation
-    // since dynamic options merging is pretty slow, and none of the
-    // internal component options needs special treatment.
-    initInternalComponent(vm, options);
-  } else {
-    vm.$options = mergeOptions(
-      resolveConstructorOptions(vm.constructor),
-      options || {},
-      vm
-    );
-  }
-
-  /* istanbul ignore else */
-  if (process.env.NODE_ENV !== 'production') {
-    initProxy(vm);
-  } else {
-    vm._renderProxy = vm;
-  }
-
-  vm._self = vm;
-  initLifecycle(vm);
-  initEvents(vm);
-  initRender(vm);
-  callHook(vm, 'beforeCreate');
-  initInjections(vm); // resolve injections before data/props
-  initState(vm);
-  initProvide(vm); // resolve provide after data/props
-  callHook(vm, 'created');
-
-  // send initial data to native
-  var data = vm.$options.data;
-  var params = typeof data === 'function'
-    ? getData(data, vm)
-    : data || {};
-  if (isPlainObject(params)) {
-    updateComponentData(componentId, params);
-  }
-
-  registerComponentHook(componentId, 'lifecycle', 'attach', function () {
-    callHook(vm, 'beforeMount');
-
-    var updateComponent = function () {
-      vm._update(vm._vnode, false);
-    };
-    new Watcher(vm, updateComponent, noop, null, true);
-
-    vm._isMounted = true;
-    callHook(vm, 'mounted');
-  });
-
-  registerComponentHook(componentId, 'lifecycle', 'detach', function () {
-    vm.$destroy();
-  });
-}
-
-// override Vue.prototype._update
-function updateVirtualComponent (vnode) {
-  var vm = this;
-  var componentId = vm.$options.componentId;
-  if (vm._isMounted) {
-    callHook(vm, 'beforeUpdate');
-  }
-  vm._vnode = vnode;
-  if (vm._isMounted && componentId) {
-    // TODO: data should be filtered and without bindings
-    var data = Object.assign({}, vm._data);
-    updateComponentData(componentId, data, function () {
-      callHook(vm, 'updated');
-    });
-  }
-}
-
-// listening on native callback
-function resolveVirtualComponent (vnode) {
-  var BaseCtor = vnode.componentOptions.Ctor;
-  var VirtualComponent = BaseCtor.extend({});
-  var cid = VirtualComponent.cid;
-  VirtualComponent.prototype._init = initVirtualComponent;
-  VirtualComponent.prototype._update = updateVirtualComponent;
-
-  vnode.componentOptions.Ctor = BaseCtor.extend({
-    beforeCreate: function beforeCreate () {
-      // const vm: Component = this
-
-      // TODO: listen on all events and dispatch them to the
-      // corresponding virtual components according to the componentId.
-      // vm._virtualComponents = {}
-      var createVirtualComponent = function (componentId, propsData) {
-        // create virtual component
-        // const subVm =
-        new VirtualComponent({
-          componentId: componentId,
-          propsData: propsData
-        });
-        // if (vm._virtualComponents) {
-        //   vm._virtualComponents[componentId] = subVm
-        // }
-      };
-
-      registerComponentHook(cid, 'lifecycle', 'create', createVirtualComponent);
-    },
-    beforeDestroy: function beforeDestroy () {
-      delete this._virtualComponents;
-    }
-  });
-}
-
-/*  */
-
-function isRecyclableComponent (vnode) {
-  return vnode.data.attrs
-    ? (RECYCLE_LIST_MARKER in vnode.data.attrs)
-    : false
-}
-
-function renderRecyclableComponentTemplate (vnode) {
-  // $flow-disable-line
-  delete vnode.data.attrs[RECYCLE_LIST_MARKER];
-  resolveVirtualComponent(vnode);
-  var vm = createComponentInstanceForVnode(vnode);
-  var render = (vm.$options)['@render'];
-  if (render) {
-    try {
-      return render.call(vm)
-    } catch (err) {
-      handleError(err, vm, "@render");
-    }
-  } else {
-    warn(
-      "@render function not defined on component used in <recycle-list>. " +
-      "Make sure to declare `recyclable=\"true\"` on the component's template.",
-      vm
-    );
-  }
-}
-
-/*  */
-
 // inline hooks to be invoked on component VNodes during patch
 var componentVNodeHooks = {
   init: function init (vnode, hydrating) {
@@ -3449,14 +3252,6 @@ function createComponent (
     asyncFactory
   );
 
-  // Weex specific: invoke recycle-list optimized @render function for
-  // extracting cell-slot template.
-  // https://github.com/Hanks10100/weex-native-directive/tree/master/component
-  /* istanbul ignore if */
-  if ( isRecyclableComponent(vnode)) {
-    return renderRecyclableComponentTemplate(vnode)
-  }
-
   return vnode
 }
 
@@ -3577,7 +3372,7 @@ function _createElement (
   if (process.env.NODE_ENV !== 'production' &&
     isDef(data) && isDef(data.key) && !isPrimitive(data.key)
   ) {
-    if ( !('@binding' in data.key)) {
+    {
       warn(
         'Avoid using non-primitive value as key, ' +
         'use string/number value instead.',
@@ -4603,7 +4398,7 @@ function queueWatcher (watcher) {
 
 
 
-var uid$2 = 0;
+var uid$1 = 0;
 
 /**
  * A watcher parses an expression, collects dependencies,
@@ -4633,7 +4428,7 @@ var Watcher = function Watcher (
     this.deep = this.user = this.lazy = this.sync = false;
   }
   this.cb = cb;
-  this.id = ++uid$2; // uid for batching
+  this.id = ++uid$1; // uid for batching
   this.active = true;
   this.dirty = this.lazy; // for lazy watchers
   this.deps = [];
@@ -5154,13 +4949,13 @@ function stateMixin (Vue) {
 
 /*  */
 
-var uid$3 = 0;
+var uid$2 = 0;
 
 function initMixin (Vue) {
   Vue.prototype._init = function (options) {
     var vm = this;
     // a uid
-    vm._uid = uid$3++;
+    vm._uid = uid$2++;
 
     var startTag, endTag;
     /* istanbul ignore if */
@@ -5990,23 +5785,11 @@ function createPatchFunction (backend) {
 
       /* istanbul ignore if */
       {
-        // in Weex, the default insertion order is parent-first.
-        // List items can be optimized to use children-first insertion
-        // with append="tree".
-        var appendAsTree = isDef(data) && isTrue(data.appendAsTree);
-        if (!appendAsTree) {
-          if (isDef(data)) {
-            invokeCreateHooks(vnode, insertedVnodeQueue);
-          }
-          insert(parentElm, vnode.elm, refElm);
-        }
         createChildren(vnode, children, insertedVnodeQueue);
-        if (appendAsTree) {
-          if (isDef(data)) {
-            invokeCreateHooks(vnode, insertedVnodeQueue);
-          }
-          insert(parentElm, vnode.elm, refElm);
+        if (isDef(data)) {
+          invokeCreateHooks(vnode, insertedVnodeQueue);
         }
+        insert(parentElm, vnode.elm, refElm);
       }
 
       if (process.env.NODE_ENV !== 'production' && data && data.pre) {
@@ -7318,20 +7101,20 @@ var platformDirectives = {
 
 /*  */
 
-function getVNodeType (vnode) {
+function getVNodeType(vnode) {
   if (!vnode.tag) {
     return ''
   }
   return vnode.tag.replace(/vue\-component\-(\d+\-)?/, '')
 }
 
-function isSimpleSpan (vnode) {
+function isSimpleSpan(vnode) {
   return vnode.children &&
     vnode.children.length === 1 &&
     !vnode.children[0].tag
 }
 
-function parseStyle (vnode) {
+function parseStyle(vnode) {
   if (!vnode || !vnode.data) {
     return
   }
@@ -7351,7 +7134,7 @@ function parseStyle (vnode) {
   }
 }
 
-function convertVNodeChildren (children) {
+function convertVNodeChildren(children ) {
   if (!children.length) {
     return
   }
@@ -7391,8 +7174,8 @@ function convertVNodeChildren (children) {
 
 var Richtext = {
   name: 'richtext',
-  render: function render (h) {
-    return h('weex:richtext', {
+  render: function render(h) {
+    return h('hl:richtext', {
       on: this._events,
       attrs: {
         value: convertVNodeChildren(this.$options._renderChildren || [])
@@ -7603,8 +7386,8 @@ delete props.mode;
 var TransitionGroup = {
   props: props,
 
-  created: function created () {
-    var dom = this.$requireWeexModule('dom');
+  created: function created() {
+    var dom = this.$requireHLModule('dom');
     this.getPosition = function (el) { return new Promise(function (resolve, reject) {
       dom.getComponentRect(el.ref, function (res) {
         if (!res.result) {
@@ -7615,13 +7398,13 @@ var TransitionGroup = {
       });
     }); };
 
-    var animation = this.$requireWeexModule('animation');
+    var animation = this.$requireHLModule('animation');
     this.animate = function (el, options) { return new Promise(function (resolve) {
       animation.transition(el.ref, options, resolve);
     }); };
   },
 
-  render: function render (h) {
+  render: function render(h) {
     var tag = this.tag || this.$vnode.data.tag || 'span';
     var map = Object.create(null);
     var prevChildren = this.prevChildren = this.children;
@@ -7634,13 +7417,13 @@ var TransitionGroup = {
       if (c.tag) {
         if (c.key != null && String(c.key).indexOf('__vlist') !== 0) {
           children.push(c);
-          map[c.key] = c
-          ;(c.data || (c.data = {})).transition = transitionData;
+          map[c.key] = c;
+          (c.data || (c.data = {})).transition = transitionData;
         } else if (process.env.NODE_ENV !== 'production') {
           var opts = c.componentOptions;
-          var name = opts
-            ? (opts.Ctor.options.name || opts.tag)
-            : c.tag;
+          var name = opts ?
+            (opts.Ctor.options.name || opts.tag) :
+            c.tag;
           warn(("<transition-group> children must be keyed: <" + name + ">"));
         }
       }
@@ -7667,7 +7450,7 @@ var TransitionGroup = {
     return h(tag, null, children)
   },
 
-  beforeUpdate: function beforeUpdate () {
+  beforeUpdate: function beforeUpdate() {
     // force removing pass
     this.__patch__(
       this._vnode,
@@ -7678,7 +7461,7 @@ var TransitionGroup = {
     this._vnode = this.kept;
   },
 
-  updated: function updated () {
+  updated: function updated() {
     var children = this.prevChildren;
     var moveClass = this.moveClass || ((this.name || 'v') + '-move');
     var moveData = children.length && this.getMoveData(children[0].context, moveClass);
@@ -7721,7 +7504,7 @@ var TransitionGroup = {
   },
 
   methods: {
-    getMoveData: function getMoveData (context, moveClass) {
+    getMoveData: function getMoveData(context, moveClass) {
       var stylesheet = context.$options.style || {};
       return stylesheet['@TRANSITION'] && stylesheet['@TRANSITION'][moveClass]
     }
@@ -7752,7 +7535,8 @@ var isReservedTag = makeMap(
   'a,div,img,image,text,span,input,switch,textarea,spinner,select,' +
   'slider,slider-neighbor,indicator,canvas,' +
   'list,cell,header,loading,loading-indicator,refresh,scrollable,scroller,' +
-  'video,web,embed,tabbar,tabheader,datepicker,timepicker,marquee,countdown',
+  'video,web,embed,tabbar,tabheader,datepicker,timepicker,marquee,countdown,' +
+  'body,center,column,row,stack,positioned,singlechildscrollview,listview,container,expanded,fractionallysizedbox,aspectratio,raisedbutton,visibility,circularprogressindicator' +
   true
 );
 
@@ -7774,15 +7558,15 @@ var isUnaryTag = makeMap(
   true
 );
 
-function mustUseProp () {
+function mustUseProp() {
   return false
 }
 
-function isUnknownElement () {
+function isUnknownElement() {
   return false
 }
 
-function query (el, document) {
+function query(el, document) {
   // document is injected by weex factory wrapper
   var placeholder = document.createComment('root');
   placeholder.hasAttribute = placeholder.removeAttribute = noop; // hack for patch
@@ -7806,9 +7590,9 @@ Vue.options.components = platformComponents;
 Vue.prototype.__patch__ = patch;
 
 // wrap mount
-Vue.prototype.$mount = function (
-  el,
-  hydrating
+Vue.prototype.$mount = function(
+  el  ,
+  hydrating  
 ) {
   return mountComponent(
     this,

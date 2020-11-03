@@ -17,10 +17,19 @@ const banner =
   ' */'
 
 const weexFactoryPlugin = {
-  intro () {
+  intro() {
     return 'module.exports = function weexFactory (exports, document) {'
   },
-  outro () {
+  outro() {
+    return '}'
+  }
+}
+
+const hlFactoryPlugin = {
+  intro() {
+    return 'module.exports = function hlFactory (exports, document) {'
+  },
+  outro() {
     return '}'
   }
 }
@@ -210,10 +219,33 @@ const builds = {
     dest: resolve('packages/weex-template-compiler/build.js'),
     format: 'cjs',
     external: Object.keys(require('../packages/weex-template-compiler/package.json').dependencies)
+  },
+  // Hl runtime factory
+  'hl-factory': {
+    hl: true,
+    entry: resolve('hl/entry-runtime-factory.js'),
+    dest: resolve('packages/hl-vue-framework/factory.js'),
+    format: 'cjs',
+    plugins: [hlFactoryPlugin]
+  },
+  // Hl runtime framework (CommonJS).
+  'hl-framework': {
+    hl: true,
+    entry: resolve('hl/entry-framework.js'),
+    dest: resolve('packages/hl-vue-framework/index.js'),
+    format: 'cjs'
+  },
+  // Hl compiler (CommonJS). Used by Hl's Webpack loader.
+  'hl-compiler': {
+    hl: true,
+    entry: resolve('hl/entry-compiler.js'),
+    dest: resolve('packages/hl-template-compiler/build.js'),
+    format: 'cjs',
+    external: Object.keys(require('../packages/hl-template-compiler/package.json').dependencies)
   }
 }
 
-function genConfig (name) {
+function genConfig(name) {
   const opts = builds[name]
   const config = {
     input: opts.entry,

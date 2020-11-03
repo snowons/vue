@@ -908,12 +908,6 @@ function addAttr (el, name, value, range, dynamic) {
   el.plain = false;
 }
 
-// add a raw attr (use this in preTransforms)
-function addRawAttr (el, name, value, range) {
-  el.attrsMap[name] = value;
-  el.attrsList.push(rangeSetItem({ name: name, value: value }, range));
-}
-
 function addDirective (
   el,
   name,
@@ -2257,24 +2251,6 @@ function genHandlers (
   }
 }
 
-// Generate handler code with binding params on Weex
-/* istanbul ignore next */
-function genWeexHandler (params, handlerCode) {
-  var innerHandlerCode = handlerCode;
-  var exps = params.filter(function (exp) { return simplePathRE.test(exp) && exp !== '$event'; });
-  var bindings = exps.map(function (exp) { return ({ '@binding': exp }); });
-  var args = exps.map(function (exp, i) {
-    var key = "$_" + (i + 1);
-    innerHandlerCode = innerHandlerCode.replace(exp, key);
-    return key
-  });
-  args.push('$event');
-  return '{\n' +
-    "handler:function(" + (args.join(',')) + "){" + innerHandlerCode + "},\n" +
-    "params:" + (JSON.stringify(bindings)) + "\n" +
-    '}'
-}
-
 function genHandler (handler) {
   if (!handler) {
     return 'function(){}'
@@ -2291,10 +2267,6 @@ function genHandler (handler) {
   if (!handler.modifiers) {
     if (isMethodPath || isFunctionExpression) {
       return handler.value
-    }
-    /* istanbul ignore if */
-    if ( handler.params) {
-      return genWeexHandler(handler.params, handler.value)
     }
     return ("function($event){" + (isFunctionInvocation ? ("return " + (handler.value)) : handler.value) + "}") // inline statement
   } else {
@@ -2334,10 +2306,6 @@ function genHandler (handler) {
         : isFunctionInvocation
           ? ("return " + (handler.value))
           : handler.value;
-    /* istanbul ignore if */
-    if ( handler.params) {
-      return genWeexHandler(handler.params, code + handlerCode)
-    }
     return ("function($event){" + code + handlerCode + "}")
   }
 }
@@ -3782,8 +3750,7 @@ function genProps (props) {
   var dynamicProps = "";
   for (var i = 0; i < props.length; i++) {
     var prop = props[i];
-    var value =  generateValue(prop.value)
-      ;
+    var value =  transformSpecialNewlines(prop.value);
     if (prop.dynamic) {
       dynamicProps += (prop.name) + "," + value + ",";
     } else {
@@ -3796,14 +3763,6 @@ function genProps (props) {
   } else {
     return staticProps
   }
-}
-
-/* istanbul ignore next */
-function generateValue (value) {
-  if (typeof value === 'string') {
-    return transformSpecialNewlines(value)
-  }
-  return JSON.stringify(value)
 }
 
 // #3895, #4268
@@ -4408,371 +4367,10 @@ var append = {
   genData: genData$3
 };
 
-/*  */
-
-/**
- * Map the following syntax to corresponding attrs:
- *
- * <recycle-list for="(item, i) in longList" switch="cellType">
- *   <cell-slot case="A"> ... </cell-slot>
- *   <cell-slot case="B"> ... </cell-slot>
- * </recycle-list>
- */
-
-function preTransformRecycleList (
-  el,
-  options
-) {
-  var exp = getAndRemoveAttr(el, 'for');
-  if (!exp) {
-    if (options.warn) {
-      options.warn("Invalid <recycle-list> syntax: missing \"for\" expression.");
-    }
-    return
-  }
-
-  var res = parseFor(exp);
-  if (!res) {
-    if (options.warn) {
-      options.warn(("Invalid <recycle-list> syntax: " + exp + "."));
-    }
-    return
-  }
-
-  addRawAttr(el, ':list-data', res.for);
-  addRawAttr(el, 'binding-expression', res.for);
-  addRawAttr(el, 'alias', res.alias);
-  if (res.iterator2) {
-    // (item, key, index) for object iteration
-    // is this even supported?
-    addRawAttr(el, 'index', res.iterator2);
-  } else if (res.iterator1) {
-    addRawAttr(el, 'index', res.iterator1);
-  }
-
-  var switchKey = getAndRemoveAttr(el, 'switch');
-  if (switchKey) {
-    addRawAttr(el, 'switch', switchKey);
-  }
-}
-
-/*  */
-
-var RECYCLE_LIST_MARKER = '@inRecycleList';
-
-/*  */
-
-// mark components as inside recycle-list so that we know we need to invoke
-// their special @render function instead of render in create-component.js
-function postTransformComponent (
-  el,
-  options
-) {
-  // $flow-disable-line (we know isReservedTag is there)
-  if (!options.isReservedTag(el.tag) && el.tag !== 'cell-slot') {
-    addAttr(el, RECYCLE_LIST_MARKER, 'true');
-  }
-}
-
-/*  */
-
-// mark component root nodes as
-function postTransformComponentRoot (el) {
-  if (!el.parent) {
-    // component root
-    addAttr(el, '@isComponentRoot', 'true');
-    addAttr(el, '@templateId', '_uid');
-    addAttr(el, '@componentProps', '$props || {}');
-  }
-}
-
-/*  */
-
-function genText$1 (node) {
-  var value = node.type === 3
-    ? node.text
-    : node.type === 2
-      ? node.tokens.length === 1
-        ? node.tokens[0]
-        : node.tokens
-      : '';
-  return JSON.stringify(value)
-}
-
-function postTransformText (el) {
-  // weex <text> can only contain text, so the parser
-  // always generates a single child.
-  if (el.children.length) {
-    addAttr(el, 'value', genText$1(el.children[0]));
-    el.children = [];
-  }
-}
-
-/*  */
-
-// import { warn } from 'core/util/index'
-
-// this will be preserved during build
-// $flow-disable-line
-var acorn = require('acorn'); // $flow-disable-line
-var walk = require('acorn/dist/walk'); // $flow-disable-line
-var escodegen = require('escodegen');
-
-function nodeToBinding (node) {
-  switch (node.type) {
-    case 'Literal': return node.value
-    case 'Identifier':
-    case 'UnaryExpression':
-    case 'BinaryExpression':
-    case 'LogicalExpression':
-    case 'ConditionalExpression':
-    case 'MemberExpression': return { '@binding': escodegen.generate(node) }
-    case 'ArrayExpression': return node.elements.map(function (_) { return nodeToBinding(_); })
-    case 'ObjectExpression': {
-      var object = {};
-      node.properties.forEach(function (prop) {
-        if (!prop.key || prop.key.type !== 'Identifier') {
-          return
-        }
-        var key = escodegen.generate(prop.key);
-        var value = nodeToBinding(prop.value);
-        if (key && value) {
-          object[key] = value;
-        }
-      });
-      return object
-    }
-    default: {
-      // warn(`Not support ${node.type}: "${escodegen.generate(node)}"`)
-      return ''
-    }
-  }
-}
-
-function generateBinding (exp) {
-  if (exp && typeof exp === 'string') {
-    var ast = null;
-    try {
-      ast = acorn.parse(("(" + exp + ")"));
-    } catch (e) {
-      // warn(`Failed to parse the expression: "${exp}"`)
-      return ''
-    }
-
-    var output = '';
-    walk.simple(ast, {
-      Expression: function Expression (node) {
-        output = nodeToBinding(node);
-      }
-    });
-    return output
-  }
-}
-
-/*  */
-
-function parseAttrName (name) {
-  return camelize(name.replace(bindRE, ''))
-}
-
-function preTransformVBind (el) {
-  for (var attr in el.attrsMap) {
-    if (bindRE.test(attr)) {
-      var name = parseAttrName(attr);
-      var value = generateBinding(getAndRemoveAttr(el, attr));
-      delete el.attrsMap[attr];
-      addRawAttr(el, name, value);
-    }
-  }
-}
-
-/*  */
-
-function hasConditionDirective (el) {
-  for (var attr in el.attrsMap) {
-    if (/^v\-if|v\-else|v\-else\-if$/.test(attr)) {
-      return true
-    }
-  }
-  return false
-}
-
-function getPreviousConditions (el) {
-  var conditions = [];
-  if (el.parent && el.parent.children) {
-    for (var c = 0, n = el.parent.children.length; c < n; ++c) {
-      // $flow-disable-line
-      var ifConditions = el.parent.children[c].ifConditions;
-      if (ifConditions) {
-        for (var i = 0, l = ifConditions.length; i < l; ++i) {
-          var condition = ifConditions[i];
-          if (condition && condition.exp) {
-            conditions.push(condition.exp);
-          }
-        }
-      }
-    }
-  }
-  return conditions
-}
-
-function preTransformVIf (el, options) {
-  if (hasConditionDirective(el)) {
-    var exp;
-    var ifExp = getAndRemoveAttr(el, 'v-if', true /* remove from attrsMap */);
-    var elseifExp = getAndRemoveAttr(el, 'v-else-if', true);
-    // don't need the value, but remove it to avoid being generated as a
-    // custom directive
-    getAndRemoveAttr(el, 'v-else', true);
-    if (ifExp) {
-      exp = ifExp;
-      addIfCondition(el, { exp: ifExp, block: el });
-    } else {
-      elseifExp && addIfCondition(el, { exp: elseifExp, block: el });
-      var prevConditions = getPreviousConditions(el);
-      if (prevConditions.length) {
-        var prevMatch = prevConditions.join(' || ');
-        exp = elseifExp
-          ? ("!(" + prevMatch + ") && (" + elseifExp + ")") // v-else-if
-          : ("!(" + prevMatch + ")"); // v-else
-      } else if (process.env.NODE_ENV !== 'production' && options.warn) {
-        options.warn(
-          "v-" + (elseifExp ? ('else-if="' + elseifExp + '"') : 'else') + " " +
-          "used on element <" + (el.tag) + "> without corresponding v-if."
-        );
-        return
-      }
-    }
-    addRawAttr(el, '[[match]]', exp);
-  }
-}
-
-/*  */
-
-function preTransformVFor (el, options) {
-  var exp = getAndRemoveAttr(el, 'v-for');
-  if (!exp) {
-    return
-  }
-
-  var res = parseFor(exp);
-  if (!res) {
-    if (process.env.NODE_ENV !== 'production' && options.warn) {
-      options.warn(("Invalid v-for expression: " + exp));
-    }
-    return
-  }
-
-  var desc = {
-    '@expression': res.for,
-    '@alias': res.alias
-  };
-  if (res.iterator2) {
-    desc['@key'] = res.iterator1;
-    desc['@index'] = res.iterator2;
-  } else {
-    desc['@index'] = res.iterator1;
-  }
-
-  delete el.attrsMap['v-for'];
-  addRawAttr(el, '[[repeat]]', desc);
-}
-
-/*  */
-
-var inlineStatementRE = /^\s*([A-Za-z_$0-9\['\."\]]+)*\s*\(\s*(([A-Za-z_$0-9\['\."\]]+)?(\s*,\s*([A-Za-z_$0-9\['\."\]]+))*)\s*\)$/;
-
-function parseHandlerParams (handler) {
-  var res = inlineStatementRE.exec(handler.value);
-  if (res && res[2]) {
-    handler.params = res[2].split(/\s*,\s*/);
-  }
-}
-
-function postTransformVOn (el) {
-  var events = el.events;
-  if (!events) {
-    return
-  }
-  for (var name in events) {
-    var handler = events[name];
-    if (Array.isArray(handler)) {
-      handler.map(function (fn) { return parseHandlerParams(fn); });
-    } else {
-      parseHandlerParams(handler);
-    }
-  }
-}
-
-/*  */
-
-function containVOnce (el) {
-  for (var attr in el.attrsMap) {
-    if (/^v\-once$/i.test(attr)) {
-      return true
-    }
-  }
-  return false
-}
-
-function preTransformVOnce (el) {
-  if (containVOnce(el)) {
-    getAndRemoveAttr(el, 'v-once', true);
-    addRawAttr(el, '[[once]]', true);
-  }
-}
-
-/*  */
-
-var currentRecycleList = null;
-
-function shouldCompile (el, options) {
-  return options.recyclable ||
-    (currentRecycleList && el !== currentRecycleList)
-}
-
-function preTransformNode$1 (el, options) {
-  if (el.tag === 'recycle-list') {
-    preTransformRecycleList(el, options);
-    currentRecycleList = el;
-  }
-  if (shouldCompile(el, options)) {
-    preTransformVBind(el);
-    preTransformVIf(el, options); // also v-else-if and v-else
-    preTransformVFor(el, options);
-    preTransformVOnce(el);
-  }
-}
-
-function transformNode$3 (el, options) {
-  if (shouldCompile(el, options)) ;
-}
-
-function postTransformNode (el, options) {
-  if (shouldCompile(el, options)) {
-    // mark child component in parent template
-    postTransformComponent(el, options);
-    // mark root in child component template
-    postTransformComponentRoot(el);
-    // <text>: transform children text into value attr
-    if (el.tag === 'text') {
-      postTransformText(el);
-    }
-    postTransformVOn(el);
-  }
-  if (el === currentRecycleList) {
-    currentRecycleList = null;
-  }
-}
-
-var recycleList = {
-  preTransformNode: preTransformNode$1,
-  transformNode: transformNode$3,
-  postTransformNode: postTransformNode
-};
+// import recycleList from './recycle-list/index'
 
 var modules = [
-  recycleList,
+  // recycleList,
   klass,
   style,
   props,
@@ -4824,7 +4422,8 @@ var isReservedTag = makeMap(
   'a,div,img,image,text,span,input,switch,textarea,spinner,select,' +
   'slider,slider-neighbor,indicator,canvas,' +
   'list,cell,header,loading,loading-indicator,refresh,scrollable,scroller,' +
-  'video,web,embed,tabbar,tabheader,datepicker,timepicker,marquee,countdown',
+  'video,web,embed,tabbar,tabheader,datepicker,timepicker,marquee,countdown,' +
+  'body,center,column,row,stack,positioned,singlechildscrollview,listview,container,expanded,fractionallysizedbox,aspectratio,raisedbutton,visibility,circularprogressindicator' +
   true
 );
 
@@ -4846,11 +4445,11 @@ var isUnaryTag$1 = makeMap(
   true
 );
 
-function mustUseProp () {
+function mustUseProp() {
   return false
 }
 
-function getTagNamespace () { }
+function getTagNamespace() {}
 
 /*  */
 

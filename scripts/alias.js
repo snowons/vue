@@ -9,6 +9,7 @@ module.exports = {
   shared: resolve('src/shared'),
   web: resolve('src/platforms/web'),
   weex: resolve('src/platforms/weex'),
+  hl: resolve('src/platforms/hl'),
   server: resolve('src/server'),
   sfc: resolve('src/sfc')
 }
